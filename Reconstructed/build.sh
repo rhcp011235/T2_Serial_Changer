@@ -86,6 +86,27 @@ if [ "$1" == "--bundle" ]; then
     cp T2BoysSN-Changer "$APP/Contents/MacOS/"
     cp -R ORSSerial.framework "$APP/Contents/Frameworks/"
 
+    # Copy Resources if they exist
+    RESOURCES_DIR="../Resources"
+    if [ -d "$RESOURCES_DIR" ]; then
+        echo ">>> Copying Resources..."
+
+        # Copy app icon
+        [ -f "$RESOURCES_DIR/AppIcon.icns" ] && cp "$RESOURCES_DIR/AppIcon.icns" "$APP/Contents/Resources/"
+
+        # Copy storyboard
+        [ -d "$RESOURCES_DIR/Main.storyboardc" ] && cp -R "$RESOURCES_DIR/Main.storyboardc" "$APP/Contents/Resources/"
+
+        # Copy RES folder (contains binaries and bootchains)
+        [ -d "$RESOURCES_DIR/RES" ] && cp -R "$RESOURCES_DIR/RES" "$APP/Contents/Resources/"
+
+        # Copy macserial
+        [ -f "$RESOURCES_DIR/macserial" ] && cp "$RESOURCES_DIR/macserial" "$APP/Contents/Resources/"
+
+        # Copy asset catalog
+        [ -f "$RESOURCES_DIR/Assets.car" ] && cp "$RESOURCES_DIR/Assets.car" "$APP/Contents/Resources/"
+    fi
+
     # Fix framework path
     install_name_tool -change \
         "@rpath/ORSSerial.framework/Versions/A/ORSSerial" \
@@ -100,6 +121,8 @@ if [ "$1" == "--bundle" ]; then
 <dict>
     <key>CFBundleExecutable</key>
     <string>T2BoysSN-Changer</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>com.t2boys.sn-changer</string>
     <key>CFBundleName</key>
@@ -112,6 +135,8 @@ if [ "$1" == "--bundle" ]; then
     <string>1</string>
     <key>LSMinimumSystemVersion</key>
     <string>10.14</string>
+    <key>NSMainStoryboardFile</key>
+    <string>Main</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSPrincipalClass</key>
