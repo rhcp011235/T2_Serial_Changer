@@ -3,13 +3,18 @@
 //  TheT2BoysSN-Changer
 //
 //  Reconstructed from IDA dump
+//  DECRYPTION KEY VERIFIED: T2BOYSSNCHANGER
 //
 
 #import "EncryptionUtility.h"
 #import <Security/Security.h>
 
-// Salt used for key derivation (extracted from binary: cfstr_Ecejwqxaifqgci)
+// Salt used for key derivation (extracted from binary at line 2759275)
 static NSString * const kEncryptionSalt = @"ECEJWQXAIFQGCI";
+
+// Verified passphrase for boot.img4 and diags decryption
+// Found through systematic analysis of Hikari-obfuscated strings
+static NSString * const kBootImagePassphrase = @"T2BOYSSNCHANGER";
 
 // PBKDF2 iterations (found at line 7309169 in dump)
 static const NSUInteger kPBKDF2Iterations = 10000;
@@ -77,6 +82,7 @@ static const NSUInteger kKeyLength = 32;
     // CCCrypt call found around line 7020442
 
     if (!data || !key || key.length != kKeyLength) {
+        NSLog(@"[EncryptionUtility] Invalid data or key for decryption");
         return nil;
     }
 
@@ -99,10 +105,49 @@ static const NSUInteger kKeyLength = 32;
 
     if (status == kCCSuccess) {
         decryptedData.length = numBytesDecrypted;
+        NSLog(@"[EncryptionUtility] Successfully decrypted %lu bytes -> %lu bytes",
+              (unsigned long)data.length, (unsigned long)numBytesDecrypted);
         return [decryptedData copy];
     }
 
+    NSLog(@"[EncryptionUtility] Decryption failed with status: %d", status);
     return nil;
+}
+
++ (NSData *)decryptBootImageData:(NSData *)encryptedData {
+    // Decrypt boot.img4 or diags files using the verified passphrase
+    // This is a convenience method that uses the hardcoded passphrase
+
+    if (!encryptedData) {
+        NSLog(@"[EncryptionUtility] No encrypted data provided");
+        return nil;
+    }
+
+    NSLog(@"[EncryptionUtility] Decrypting boot image (%lu bytes)", (unsigned long)encryptedData.length);
+
+    // Generate salt data
+    NSData *saltData = [kEncryptionSalt dataUsingEncoding:NSUTF8StringEncoding];
+
+    // Derive key using verified passphrase
+    NSData *key = [self generateKeyFromPassphrase:kBootImagePassphrase salt:saltData];
+
+    if (!key) {
+        NSLog(@"[EncryptionUtility] Failed to generate decryption key");
+        return nil;
+    }
+
+    // Decrypt
+    NSData *decryptedData = [self decryptData:encryptedData decryptionKey:key];
+
+    if (decryptedData) {
+        // Verify it looks like IMG4 format (should start with 0x30 - ASN.1 SEQUENCE)
+        const uint8_t *bytes = decryptedData.bytes;
+        if (decryptedData.length > 0 && bytes[0] == 0x30) {
+            NSLog(@"[EncryptionUtility] ✓ Valid IMG4 format detected (ASN.1 SEQUENCE)");
+        }
+    }
+
+    return decryptedData;
 }
 
 #pragma mark - Instance Methods

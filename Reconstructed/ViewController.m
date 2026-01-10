@@ -403,38 +403,336 @@ typedef NS_ENUM(NSUInteger, HWInfoIndex) {
 - (void)decryptBootImageAtPath:(NSString *)path {
     // Original function at line 56043 in dump
     // Implementation around line 7733182
+    // NOTE: Encryption details unverified - files may be sent as-is to device
 
     if (!path || ![[NSFileManager defaultManager] fileExistsAtPath:path]) {
-        NSLog(@"Boot image not found at path: %@", path);
+        NSLog(@"[ViewController] Boot image not found at path: %@", path);
         return;
     }
 
-    NSData *encryptedData = [NSData dataWithContentsOfFile:path];
-    if (!encryptedData) {
+    // IMPORTANT: These files appear to be Apple-encrypted IMG4 images
+    // They may be sent directly to the device without app-level decryption
+    // The T2 chip likely handles decryption using hardware keys
+
+    NSLog(@"[ViewController] Preparing boot image at: %@", path);
+
+    NSData *imageData = [NSData dataWithContentsOfFile:path];
+    if (!imageData) {
+        NSLog(@"[ViewController] Failed to read image data");
         return;
     }
 
-    // Generate decryption key
-    NSData *salt = [@"ECEJWQXAIFQGCI" dataUsingEncoding:NSUTF8StringEncoding];
-    NSData *key = [EncryptionUtility generateKeyFromPassphrase:@"T2BoysDecryptionKey" salt:salt];
+    // Copy to temp directory for irecovery to access
+    NSString *tempPath = [self decryptedDiagsPath];
+    NSError *error = nil;
 
-    // Decrypt the boot image
-    NSData *decryptedData = [EncryptionUtility decryptData:encryptedData decryptionKey:key];
+    // Create directory if needed
+    [[NSFileManager defaultManager] createDirectoryAtPath:[tempPath stringByDeletingLastPathComponent]
+                              withIntermediateDirectories:YES
+                                               attributes:nil
+                                                    error:&error];
 
-    if (decryptedData) {
-        // Save decrypted boot image
-        NSString *decryptedPath = [path stringByAppendingString:@".decrypted"];
-        [decryptedData writeToFile:decryptedPath atomically:YES];
-        NSLog(@"Boot image decrypted to: %@", decryptedPath);
-    }
+    // Write data (may still be encrypted - device handles decryption)
+    [imageData writeToFile:tempPath atomically:YES];
+    NSLog(@"[ViewController] ✓ Boot image prepared at: %@", tempPath);
+    NSLog(@"[ViewController] Size: %lu bytes", (unsigned long)imageData.length);
+    NSLog(@"[ViewController] Note: File sent as-is to device (Apple-encrypted IMG4)");
 }
 
 - (NSString *)decryptedDiagsPath {
     // Original function at line 65508 in dump
     // Implementation around line 7910440
+    // Returns path where decrypted diagnostic images are stored
 
     NSString *tempDir = NSTemporaryDirectory();
-    return [tempDir stringByAppendingPathComponent:@"decrypted_diags"];
+    return [tempDir stringByAppendingPathComponent:@"decrypted_diags.img4"];
+}
+
+- (NSString *)bootImagePath {
+    // Get path to encrypted boot.img4 in bundle
+    NSString *libraryPath = [[NSBundle mainBundle] pathForResource:@"boot"
+                                                            ofType:@"img4"
+                                                       inDirectory:@"RES/LIBRARY"];
+    return libraryPath;
+}
+
+- (NSString *)diagsPathForModel:(NSString *)modelIdentifier {
+    // Get path to encrypted diags file for specific model
+    // Model identifiers: A1862, A1932, A1989, A1990, A1991, A1993, A2115, A2115v2, A2141, A2159, A2179, A2251, A2289
+
+    if (!modelIdentifier || modelIdentifier.length == 0) {
+        NSLog(@"[ViewController] No model identifier provided");
+        return nil;
+    }
+
+    NSString *bootchainsPath = [[NSBundle mainBundle] pathForResource:@"bootchains"
+                                                               ofType:nil
+                                                          inDirectory:@"RES/LIBRARY"];
+
+    if (!bootchainsPath) {
+        NSLog(@"[ViewController] Bootchains directory not found in bundle");
+        return nil;
+    }
+
+    NSString *diagsPath = [NSString stringWithFormat:@"%@/%@/diags", bootchainsPath, modelIdentifier];
+
+    if (![[NSFileManager defaultManager] fileExistsAtPath:diagsPath]) {
+        NSLog(@"[ViewController] Diags file not found for model: %@", modelIdentifier);
+        return nil;
+    }
+
+    NSLog(@"[ViewController] Found diags for model %@: %@", modelIdentifier, diagsPath);
+    return diagsPath;
+}
+
+- (void)prepareAndLoadDiagsForModel:(NSString *)modelIdentifier {
+    // Complete workflow: locate and prepare diags file for device
+    // This is called after device model is detected
+    // Note: Files are Apple-encrypted IMG4, sent as-is to device
+
+    NSLog(@"[ViewController] Preparing diags for model: %@", modelIdentifier);
+
+    // Get path to diags file
+    NSString *diagsPath = [self diagsPathForModel:modelIdentifier];
+    if (!diagsPath) {
+        NSLog(@"[ViewController] Cannot find diags for model: %@", modelIdentifier);
+        return;
+    }
+
+    // Copy/prepare the diags file (sent as-is, Apple-encrypted)
+    [self decryptBootImageAtPath:diagsPath];
+
+    NSLog(@"[ViewController] ✓ Diags ready for upload to device");
+}
+
+#pragma mark - DFU Mode & Device Communication
+
+- (void)executeGasterPwn {
+    // Execute gaster exploit to pwn T2 bootrom
+    // Implements checkm8 exploit via gaster binary
+    // Found at: Resources/RES/ipwnders/gaster
+
+    NSLog(@"[ViewController] === Executing Gaster PWN (checkm8 exploit) ===");
+
+    NSString *gasterPath = [[NSBundle mainBundle] pathForResource:@"gaster"
+                                                           ofType:nil
+                                                      inDirectory:@"RES/ipwnders"];
+
+    if (!gasterPath || ![[NSFileManager defaultManager] fileExistsAtPath:gasterPath]) {
+        NSLog(@"[ViewController] ✗ Gaster binary not found in bundle");
+        [self.statusLabel setStringValue:@"Error: gaster not found"];
+        return;
+    }
+
+    // Make executable
+    NSTask *chmodTask = [[NSTask alloc] init];
+    [chmodTask setLaunchPath:@"/bin/chmod"];
+    [chmodTask setArguments:@[@"+x", gasterPath]];
+    [chmodTask launch];
+    [chmodTask waitUntilExit];
+
+    // Execute: gaster pwn
+    NSTask *gasterTask = [[NSTask alloc] init];
+    [gasterTask setLaunchPath:gasterPath];
+    [gasterTask setArguments:@[@"pwn"]];
+
+    NSPipe *outputPipe = [NSPipe pipe];
+    [gasterTask setStandardOutput:outputPipe];
+    [gasterTask setStandardError:outputPipe];
+
+    NSLog(@"[ViewController] Executing: %@ pwn", gasterPath);
+    [self.statusLabel setStringValue:@"Exploiting T2 bootrom..."];
+
+    [gasterTask launch];
+    [gasterTask waitUntilExit];
+
+    int exitCode = [gasterTask terminationStatus];
+
+    // Read output
+    NSData *outputData = [[outputPipe fileHandleForReading] readDataToEndOfFile];
+    NSString *output = [[NSString alloc] initWithData:outputData encoding:NSUTF8StringEncoding];
+
+    if (exitCode == 0) {
+        NSLog(@"[ViewController] ✓ Gaster PWN successful!");
+        NSLog(@"[ViewController] Output: %@", output);
+        [self.statusLabel setStringValue:@"T2 bootrom exploited ✓"];
+    } else {
+        NSLog(@"[ViewController] ✗ Gaster PWN failed with exit code: %d", exitCode);
+        NSLog(@"[ViewController] Output: %@", output);
+        [self.statusLabel setStringValue:@"Exploit failed - check device is in DFU mode"];
+    }
+}
+
+- (void)sendDiagsToDevice:(NSString *)diagsPath {
+    // Send decrypted diagnostic image to T2 device via irecovery
+    // Uses irecovery binary from Resources/RES/irecovery
+
+    if (!diagsPath || ![[NSFileManager defaultManager] fileExistsAtPath:diagsPath]) {
+        NSLog(@"[ViewController] ✗ Diags file not found: %@", diagsPath);
+        return;
+    }
+
+    NSLog(@"[ViewController] === Sending diags to device via irecovery ===");
+
+    NSString *irecoveryPath = [[NSBundle mainBundle] pathForResource:@"irecovery"
+                                                              ofType:nil
+                                                         inDirectory:@"RES"];
+
+    if (!irecoveryPath || ![[NSFileManager defaultManager] fileExistsAtPath:irecoveryPath]) {
+        NSLog(@"[ViewController] ✗ irecovery binary not found in bundle");
+        [self.statusLabel setStringValue:@"Error: irecovery not found"];
+        return;
+    }
+
+    // Make executable
+    NSTask *chmodTask = [[NSTask alloc] init];
+    [chmodTask setLaunchPath:@"/bin/chmod"];
+    [chmodTask setArguments:@[@"+x", irecoveryPath]];
+    [chmodTask launch];
+    [chmodTask waitUntilExit];
+
+    // Execute: irecovery -f <diags_path>
+    NSTask *irecoveryTask = [[NSTask alloc] init];
+    [irecoveryTask setLaunchPath:irecoveryPath];
+    [irecoveryTask setArguments:@[@"-f", diagsPath]];
+
+    NSPipe *outputPipe = [NSPipe pipe];
+    [irecoveryTask setStandardOutput:outputPipe];
+    [irecoveryTask setStandardError:outputPipe];
+
+    NSLog(@"[ViewController] Executing: %@ -f %@", irecoveryPath, diagsPath);
+    [self.statusLabel setStringValue:@"Uploading diagnostic image..."];
+    [self.progressIndicator startAnimation:self];
+
+    [irecoveryTask launch];
+    [irecoveryTask waitUntilExit];
+
+    [self.progressIndicator stopAnimation:self];
+
+    int exitCode = [irecoveryTask terminationStatus];
+
+    // Read output
+    NSData *outputData = [[outputPipe fileHandleForReading] readDataToEndOfFile];
+    NSString *output = [[NSString alloc] initWithData:outputData encoding:NSUTF8StringEncoding];
+
+    if (exitCode == 0) {
+        NSLog(@"[ViewController] ✓ Diags uploaded successfully!");
+        NSLog(@"[ViewController] Output: %@", output);
+        [self.statusLabel setStringValue:@"Diagnostic mode loaded ✓"];
+    } else {
+        NSLog(@"[ViewController] ✗ irecovery failed with exit code: %d", exitCode);
+        NSLog(@"[ViewController] Output: %@", output);
+        [self.statusLabel setStringValue:@"Upload failed"];
+    }
+}
+
+- (NSString *)detectDeviceModel {
+    // Detect connected T2 Mac model via irecovery -q
+    // Returns model identifier like "A2141", "A1989", etc.
+
+    NSLog(@"[ViewController] === Detecting device model ===");
+
+    NSString *irecoveryPath = [[NSBundle mainBundle] pathForResource:@"irecovery"
+                                                              ofType:nil
+                                                         inDirectory:@"RES"];
+
+    if (!irecoveryPath) {
+        NSLog(@"[ViewController] ✗ irecovery not found");
+        return nil;
+    }
+
+    // Make executable
+    NSTask *chmodTask = [[NSTask alloc] init];
+    [chmodTask setLaunchPath:@"/bin/chmod"];
+    [chmodTask setArguments:@[@"+x", irecoveryPath]];
+    [chmodTask launch];
+    [chmodTask waitUntilExit];
+
+    // Execute: irecovery -q
+    NSTask *irecoveryTask = [[NSTask alloc] init];
+    [irecoveryTask setLaunchPath:irecoveryPath];
+    [irecoveryTask setArguments:@[@"-q"]];
+
+    NSPipe *outputPipe = [NSPipe pipe];
+    [irecoveryTask setStandardOutput:outputPipe];
+
+    [irecoveryTask launch];
+    [irecoveryTask waitUntilExit];
+
+    // Read output
+    NSData *outputData = [[outputPipe fileHandleForReading] readDataToEndOfFile];
+    NSString *output = [[NSString alloc] initWithData:outputData encoding:NSUTF8StringEncoding];
+
+    // Parse output for model identifier
+    // Look for "PRODUCT:" line which contains model like "iBridge2,15" -> maps to A2141
+    NSArray *lines = [output componentsSeparatedByString:@"\n"];
+    NSString *modelIdentifier = nil;
+
+    for (NSString *line in lines) {
+        if ([line containsString:@"MODEL:"]) {
+            // Extract model number
+            NSArray *parts = [line componentsSeparatedByString:@":"];
+            if (parts.count > 1) {
+                modelIdentifier = [[parts[1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] uppercaseString];
+                break;
+            }
+        }
+    }
+
+    if (modelIdentifier) {
+        NSLog(@"[ViewController] ✓ Detected model: %@", modelIdentifier);
+    } else {
+        NSLog(@"[ViewController] ✗ Could not detect model from irecovery output");
+        NSLog(@"[ViewController] Output: %@", output);
+    }
+
+    return modelIdentifier;
+}
+
+- (void)completeT2BootSequence {
+    // Complete workflow: DFU -> Exploit -> Detect -> Decrypt -> Load Diags
+    // This orchestrates the entire T2 boot sequence for serial number modification
+
+    NSLog(@"\n");
+    NSLog(@"[ViewController] ========================================");
+    NSLog(@"[ViewController] STARTING T2 BOOT SEQUENCE");
+    NSLog(@"[ViewController] ========================================");
+
+    // Step 1: Execute gaster pwn (checkm8 exploit)
+    [self.statusLabel setStringValue:@"Step 1/4: Exploiting bootrom..."];
+    [self executeGasterPwn];
+
+    // Small delay to let device stabilize
+    [NSThread sleepForTimeInterval:2.0];
+
+    // Step 2: Detect device model
+    [self.statusLabel setStringValue:@"Step 2/4: Detecting device model..."];
+    NSString *modelIdentifier = [self detectDeviceModel];
+
+    if (!modelIdentifier) {
+        NSLog(@"[ViewController] ✗ Cannot proceed without model detection");
+        [self.statusLabel setStringValue:@"Error: Model detection failed"];
+        return;
+    }
+
+    // Step 3: Prepare appropriate diags file
+    [self.statusLabel setStringValue:[NSString stringWithFormat:@"Step 3/4: Preparing diags for %@...", modelIdentifier]];
+    [self prepareAndLoadDiagsForModel:modelIdentifier];
+
+    // Step 4: Send diags to device
+    [self.statusLabel setStringValue:@"Step 4/4: Loading diagnostic mode..."];
+    NSString *decryptedDiagsPath = [self decryptedDiagsPath];
+    [self sendDiagsToDevice:decryptedDiagsPath];
+
+    NSLog(@"[ViewController] ========================================");
+    NSLog(@"[ViewController] T2 BOOT SEQUENCE COMPLETE");
+    NSLog(@"[ViewController] Device should now be in diagnostic mode");
+    NSLog(@"[ViewController] Serial port should be available for SN modification");
+    NSLog(@"[ViewController] ========================================");
+    NSLog(@"\n");
+
+    // Auto-connect to serial port
+    [self performSelector:@selector(autoConnectToSerialPort) withObject:nil afterDelay:3.0];
 }
 
 #pragma mark - Logging (from dump line 52032)

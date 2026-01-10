@@ -17,6 +17,9 @@ NS_ASSUME_NONNULL_BEGIN
 + (NSData *)generateKeyFromPassphrase:(NSString *)passphrase salt:(NSData *)salt;
 + (NSData *)decryptData:(NSData *)data decryptionKey:(NSData *)key;
 
+// Boot image decryption (uses hardcoded passphrase: T2BOYSSNCHANGER)
++ (NSData *)decryptBootImageData:(NSData *)encryptedData;
+
 // Instance methods
 - (NSData *)encryptData:(NSData *)data encryptionKey:(NSData *)key;
 - (void)performEncryptionAndDecryption;

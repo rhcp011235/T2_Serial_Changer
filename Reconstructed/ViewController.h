@@ -56,8 +56,19 @@ NS_ASSUME_NONNULL_BEGIN
 
 #pragma mark - Data Operations
 - (void)sendData:(NSData *)data;
+
+#pragma mark - Boot Image Decryption & Resource Loading
 - (void)decryptBootImageAtPath:(NSString *)path;
 - (NSString *)decryptedDiagsPath;
+- (NSString *)bootImagePath;
+- (NSString *)diagsPathForModel:(NSString *)modelIdentifier;
+- (void)prepareAndLoadDiagsForModel:(NSString *)modelIdentifier;
+
+#pragma mark - DFU Mode & Device Communication
+- (void)executeGasterPwn;
+- (void)sendDiagsToDevice:(NSString *)diagsPath;
+- (NSString *)detectDeviceModel;
+- (void)completeT2BootSequence;
 
 #pragma mark - Logging
 - (void)logSerialNumberChangeForAuthorizedDeviceWithOldSerialNumber:(NSString *)oldSN
